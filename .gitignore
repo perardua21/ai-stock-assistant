@@ -1,0 +1,36 @@
+# env / secrets
+.env
+*.env.local
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# node
+node_modules/
+.next/
+dist/
+build/
+
+# data
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+*.csv
+!db/seed/*.csv
+
+# models / checkpoints
+*.pt
+*.pth
+*.ckpt
+*.bin
+ai/classification/**/checkpoints/
+
+# os / editor
+.DS_Store
+.vscode/
+.idea/
