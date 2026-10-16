@@ -1,0 +1,4 @@
+shap>=0.45
+captum>=0.7
+torch>=2.1
+openai>=1.0
