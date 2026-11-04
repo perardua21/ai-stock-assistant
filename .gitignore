@@ -34,3 +34,6 @@ ai/classification/**/checkpoints/
 .DS_Store
 .vscode/
 .idea/
+
+# db dumps (팀원끼리 직접 주고받기, 깃에는 안 올림)
+*.dump
