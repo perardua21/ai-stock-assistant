@@ -28,7 +28,7 @@ docker exec %CONTAINER% rm -f /tmp/db.dump >nul
 
 echo.
 echo 완료했습니다. 들어간 데이터 확인:
-docker exec %CONTAINER% psql -U %DB_USER% -d %DB_NAME% -c "select (select count(*) from stock_master) as stock_master, (select count(*) from price_daily) as price_daily, (select count(*) from news_raw) as news_raw;"
+docker exec %CONTAINER% psql -U %DB_USER% -d %DB_NAME% -c "select (select count(*) from stock_master) as stock_master, (select count(*) from price_daily) as price_daily, (select count(*) from index_daily) as index_daily, (select count(*) from label_crash) as label_crash, (select count(*) from forecast_feature) as forecast_feature;"
 goto :end
 
 :no_file

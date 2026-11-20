@@ -1,16 +1,25 @@
 """
-네이버 뉴스 검색 API — 종목/기업명 기반 뉴스 수집.
+네이버 뉴스 검색 API
 
-TODO:
-  - 종목명만으로 검색하면 동명이인/동명기업 노이즈가 섞일 수 있어
-    쿼리 보정(예: "{종목명} 주가" 등) 또는 사후 필터링 필요
+뉴스는 학습에 안 쓰고 에이전트가 search_news 툴로 그때그때 읽음.
+제한: display 100개, start 1000까지, 날짜 지정 안 됨(최신순), 본문 없이 요약만.
 """
-import os
+from __future__ import annotations
 
-from common.client import request_json
-from common.storage import upsert_rows
+import html
+import os
+import re
+from email.utils import parsedate_to_datetime
+
+from ai.ingestion.common.client import request_json
+from ai.common.db import upsert_rows
 
 _URL = "https://openapi.naver.com/v1/search/news.json"
+_TAG = re.compile(r"<[^>]+>")
+
+
+def _clean(s: str | None) -> str:
+    return html.unescape(_TAG.sub("", s or "")).strip()
 
 
 def fetch_news(query: str, display: int = 100, start: int = 1) -> list[dict]:
@@ -24,20 +33,29 @@ def fetch_news(query: str, display: int = 100, start: int = 1) -> list[dict]:
     )
     rows = []
     for item in resp.get("items", []):
+        try:
+            published = parsedate_to_datetime(item.get("pubDate"))
+        except (TypeError, ValueError):
+            published = None
         rows.append({
-            "code": None,  # 종목코드 매칭은 저장 후 별도 배치로 처리
-            "title": item["title"],
-            "description": item.get("description"),
+            "code": None,
+            "title": _clean(item["title"]),
+            "description": _clean(item.get("description")),
             "link": item.get("originallink") or item.get("link"),
-            "published_at": item.get("pubDate"),
+            "published_at": published,
             "source_query": query,
         })
     return rows
 
 
+def save_news(rows: list[dict], code: str | None = None) -> int:
+    if code:
+        rows = [{**r, "code": code} for r in rows]
+    return upsert_rows("news_raw", rows, conflict_cols=["link", "published_at"])
+
+
 def fetch_all(queries: list[str]) -> int:
     total = 0
     for q in queries:
-        rows = fetch_news(q)
-        total += upsert_rows("news_raw", rows, conflict_cols=["link", "published_at"])
+        total += save_news(fetch_news(q))
     return total

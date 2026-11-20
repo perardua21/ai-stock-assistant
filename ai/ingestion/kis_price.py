@@ -7,8 +7,8 @@ TODO:
 """
 import os
 
-from common.client import TokenCache, request_json
-from common.storage import upsert_rows
+from ai.ingestion.common.client import TokenCache, request_json
+from ai.common.db import upsert_rows
 
 _MOCK_BASE = "https://openapivts.koreainvestment.com:29443"
 _REAL_BASE = "https://openapi.koreainvestment.com:9443"

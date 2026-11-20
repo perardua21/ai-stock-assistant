@@ -7,7 +7,7 @@ on:
     branches: [main, dev]
 
 jobs:
-  python-lint:
+  python-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,4 +15,6 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r ai/requirements.txt
-      - run: python -m py_compile ai/ingestion/*.py ai/ingestion/common/*.py
+      - run: python -m compileall -q ai scripts
+      # DB · Chronos · LLM 없이 도는 단위 테스트 (가짜 데이터 · 가짜 LLM)
+      - run: python -m pytest -q

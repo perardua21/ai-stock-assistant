@@ -30,6 +30,13 @@ def test_test_is_strictly_after_train():
     assert train_df["base_date"].max() < test_df["base_date"].min()
 
 
+def test_embargo_drops_last_days_of_train():
+    df = _dummy_df()
+    train_df, test_df = train_test_split_by_date(df, train_end="2025-06-30", embargo_days=5)
+    gap = pd.bdate_range(train_df["base_date"].max(), test_df["base_date"].min())
+    assert len(gap) - 2 >= 4  # train 마지막 날과 test 첫날 사이에 영업일 공백이 있어야 함
+
+
 def test_all_rows_covered():
     df = _dummy_df()
     train_df, test_df = train_test_split_by_date(df, train_end="2025-06-30")

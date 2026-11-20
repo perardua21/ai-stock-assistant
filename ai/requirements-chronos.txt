@@ -1,0 +1,4 @@
+# Chronos-2 실행용 (용량이 커서 따로 설치). GPU가 있으면 CUDA용 torch를 먼저 설치한다.
+torch>=2.2
+chronos-forecasting>=2.2
+peft>=0.13   # LoRA 추가 학습할 때만 필요

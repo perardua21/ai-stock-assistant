@@ -12,7 +12,14 @@ class ApiError(Exception):
     pass
 
 
-@backoff.on_exception(backoff.expo, (requests.RequestException, ApiError), max_tries=5, jitter=backoff.full_jitter)
+def _no_retry(e) -> bool:
+    """401(키 오류), 404 같은 4xx는 다시 불러도 똑같아서 재시도 안 함 (429만 재시도)"""
+    r = getattr(e, "response", None)
+    return r is not None and 400 <= r.status_code < 500 and r.status_code != 429
+
+
+@backoff.on_exception(backoff.expo, (requests.RequestException, ApiError), max_tries=5,
+                      jitter=backoff.full_jitter, giveup=_no_retry)
 def request_json(method: str, url: str, **kwargs) -> dict:
     """requests 호출 + 재시도. 429/5xx는 backoff가 알아서 재시도하도록 ApiError로 변환."""
     resp = requests.request(method, url, timeout=kwargs.pop("timeout", 10), **kwargs)

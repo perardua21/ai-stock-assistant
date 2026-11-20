@@ -37,3 +37,13 @@ ai/classification/**/checkpoints/
 
 # db dumps (팀원끼리 직접 주고받기, 깃에는 안 올림)
 *.dump
+
+# 실행 결과물 (각자 생성, 공유는 db.dump / 파일 전달)
+data/*.json
+data/reports/
+models/*
+!models/.gitkeep
+chronos-2-finetuned/
+*.parquet
+ai/harness/skills/proposed/*
+!ai/harness/skills/proposed/.gitkeep

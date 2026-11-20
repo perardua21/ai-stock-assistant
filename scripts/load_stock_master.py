@@ -40,7 +40,10 @@ def main():
             for r in csv.DictReader(f)
         ]
 
-    engine = create_engine(os.environ["DATABASE_URL"])
+    url = os.environ["DATABASE_URL"]
+    if url.startswith("postgresql://"):  # SQLAlchemy 2.1 기본 드라이버가 psycopg(3)라서 psycopg2로 고정
+        url = "postgresql+psycopg2://" + url[len("postgresql://"):]
+    engine = create_engine(url)
     with engine.begin() as conn:
         conn.execute(UPSERT_SQL, rows)
 

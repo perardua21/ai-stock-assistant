@@ -1,45 +1,40 @@
 # DB 스키마
 
-## 1차 — raw 테이블 (`migrations/0001_init_raw_tables.sql`)
+migration은 `db/migrations/`에 번호 순서로 쌓는다. 처음 `docker compose up` 때 자동 적용되고,
+이미 DB가 있으면 `scripts\db_migrate.bat`로 적용한다 (여러 번 실행해도 안전).
+
+## 0001 수집 원본
 
 | 테이블 | 설명 | 주요 컬럼 |
 | --- | --- | --- |
 | `stock_master` | KOSPI 종목 마스터 | `code`(PK), `name`, `market`, `is_active` |
-| `price_daily` | 일별 시세·수급 | `code`, `trade_date`, OHLCV, `foreign_net_buy`, `inst_net_buy` |
-| `financial_statement` | 재무제표 | `code`, `fiscal_year`, `fiscal_quarter`, 매출/영업이익/순이익 등 |
-| `disclosure` | 공시 원문 메타 | `code`, `rcept_no`(OpenDART 접수번호), `report_name`, `url` |
-| `news_raw` | 뉴스 원문 | `code`(nullable), `title`, `description`, `link`, `published_at` |
+| `price_daily` | 수정주가 일봉 · 수급 | `code`, `trade_date`, OHLCV, `trading_value`·`market_cap`(0004), `foreign_net_buy`, `inst_net_buy` |
+| `financial_statement` | 재무제표 (현재 미사용) | |
+| `disclosure` | 공시 목록 | `code`, `rcept_no`, `report_name`, `submitted_at` |
+| `news_raw` | 에이전트가 읽은 뉴스 | `code`, `title`, `description`, `link`, `published_at` |
 
-## 2차 — classification + XAI 테이블 (`migrations/0002_add_explain_tables.sql`)
+## 0002 분류기 결과
 
-| 테이블 | 설명 | 대응하는 XAI 방법 |
+| 테이블 | 설명 |
+| --- | --- |
+| `classification_result` | 종목·날짜·모델 버전별 급락 확률 (LightGBM) |
+| `feature_importance` | 위 확률의 SHAP 상위 피처 |
+
+(0002에 있던 `news_token_importance`, `news_ablation`, `explanation_log`는 0004에서 삭제)
+
+## 0003 라벨
+
+| 테이블 | 설명 |
+| --- | --- |
+| `label_crash` | 종목·기준일별 급락 정답 (5거래일 내 종가 -10% 이하), `min_return` |
+
+## 0004 Chronos-2 · 하네스
+
+| 테이블 | 설명 | 만드는 코드 |
 | --- | --- | --- |
-| `classification_result` | 종목·시점별 급락확률 예측 결과 | — |
-| `feature_importance` | 정형 데이터(가격·재무·수급) feature별 기여도 | **SHAP** |
-| `news_token_importance` | 뉴스 텍스트에서 단어별 중요도 | **Integrated Gradients** |
-| `news_ablation` | 뉴스 1건 제거 시 급락확률 변화량 | **Ablation** |
-| `explanation_log` | 위 세 근거를 종합해 GPT가 생성한 최종 추천 사유 | — |
-
-`feature_importance` / `news_token_importance` / `news_ablation`은 모두 `classification_result.id`를
-FK로 참조하고, `news_token_importance`·`news_ablation`은 `news_raw.id`도 함께 참조해 "어떤 뉴스의
-어떤 단어"인지 추적 가능하게 설계했습니다.
-
-## 3차 — 레이블 테이블 (`migrations/0003_add_label_crash.sql`)
-
-| 테이블 | 설명 | 생성 코드 |
-| --- | --- | --- |
-| `label_crash` | 종목·기준일별 급락 정답 레이블 (5거래일 내 종가 -10% 이하 여부) | `ai/labeling/build_crash_label.py` |
-
-`feature_importance` 등 classification 결과 테이블과는 따로 뒀습니다. 기준일 이후
-가격으로 만드는 값이라 feature 생성 코드와 섞이지 않게 `ai/labeling/`을 따로 뒀고,
-structured/text_bert/fusion이 전부 여기서 만든 레이블 하나만 씁니다.
-
-## 추후 추가 예정 (ai 단계 진행하면서 확정되는 대로 migration 추가)
-
-- `news_structured` — GPT로 구조화한 sentiment / impact / risk_score / event_type
-- `feature_store` — feature engineering 결과 (기술지표·수급누적·재무비율 등)
-- `portfolio_result` — 최적화 비중 + 사용된 제약조건
-
-raw 테이블(1차)은 "수집한 데이터를 그대로 담는" 용도, classification+XAI 테이블(2차)은
-"모델이 계산한 결과와 그 근거를 담는" 용도, 레이블 테이블(3차)은 "정답(y)을 담는" 용도입니다.
-위 추후 목록은 ai 단계에서 실제 출력 형태가 확정된 뒤 설계합니다.
+| `index_daily` | KOSPI 지수 일봉 | `ai/ingestion/pykrx_market.py` |
+| `forecast_feature` | Chronos-2 예측 분포 요약 (p_crash, 분위수 수익률, 불확실성). `model_name`으로 공변량 유무 구분 | `ai/forecasting/run_forecast.py` |
+| `agent_decision` | 에이전트 판단 (모델 확률 → 조정 확률, judgment, 근거, 툴 호출 기록, 프롬프트·스킬 버전) | `ai/harness/memory.py` |
+| `agent_score` | 5거래일 뒤 채점 (실제 급락 여부, 정답 여부, brier) | `ai/harness/scoring.py` |
+| `skill_revision` | 스킬 개선안 (proposed / applied / rejected) | `ai/harness/evolve.py` |
+| `portfolio_result` | 날짜별 추천 비중 | `ai/pipeline/run_daily.py` |
