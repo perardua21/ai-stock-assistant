@@ -1,3 +1,4 @@
+# INGEST_FIX_V1: historical resume and KRX error logging
 """
 pykrx로 일봉, 시가총액, 거래대금, 외국인/기관 순매수, KOSPI 지수 수집
 
@@ -28,7 +29,7 @@ def _f(v):
     return None if f != f else f
 
 
-def _chunks(start: str, end: str, days: int = 365):
+def _chunks(start: str, end: str, days: int = 90):
     """KRX 조회 기간 제한 때문에 1년 단위로 나눠서 부른다."""
     s = dt.datetime.strptime(start, "%Y%m%d").date()
     e = dt.datetime.strptime(end, "%Y%m%d").date()
@@ -39,16 +40,98 @@ def _chunks(start: str, end: str, days: int = 365):
 
 
 def _krx(fn, start, end, code, cols: dict) -> pd.DataFrame:
-    """KRX 함수를 기간별로 나눠 부르고 필요한 컬럼만 영어 이름으로 바꿔서 합친다.
-    로그인 실패 등으로 빈 표가 오면 빈 DataFrame."""
+    """KRX 데이터를 365일 단위로 조회하고 실패 구간만 90일로 재조회."""
+    import json
+    from pathlib import Path
+    from datetime import datetime, timezone
+
     parts = []
-    for s, e in _chunks(start, end):
-        df = fn(s, e, code)
-        if df is not None and len(df) and set(cols) <= set(df.columns):
-            parts.append(df[list(cols)].rename(columns=cols))
+    failed_chunks = []
+
+    def request(s, e):
+        """주어진 기간을 최대 3회 조회."""
+        for attempt in range(1, 4):
+            try:
+                df = fn(s, e, code)
+
+                if (
+                    df is not None
+                    and not df.empty
+                    and set(cols).issubset(df.columns)
+                ):
+                    return df[list(cols)].rename(columns=cols)
+
+                reason = "empty response / missing columns"
+
+            except Exception as exc:
+                reason = f"{type(exc).__name__}: {exc}"
+
+            print(
+                f"[warn] {code} {fn.__name__} "
+                f"{s}~{e} {reason} ({attempt}/3)",
+                flush=True,
+            )
+
+            if attempt < 3:
+                time.sleep(2 * attempt)
+
+        return None
+
+    # 1차: 365일 단위로 조회
+    for s, e in _chunks(start, end, days=365):
+        result = request(s, e)
+
+        if result is not None:
+            parts.append(result)
+        else:
+            print(
+                f"[info] {code} {s}~{e}: "
+                "90일 단위로 재조회",
+                flush=True,
+            )
+
+            # 2차: 실패한 구간만 90일 단위로 재조회
+            for sub_s, sub_e in _chunks(s, e, days=90):
+                sub_result = request(sub_s, sub_e)
+
+                if sub_result is not None:
+                    parts.append(sub_result)
+                else:
+                    failed_chunks.append(f"{sub_s}~{sub_e}")
+
+                time.sleep(0.5)
+
+        time.sleep(0.5)
+
+    # 최종 실패 구간 기록
+    if failed_chunks:
+        log = Path("logs/krx_failed_chunks.jsonl")
+        log.parent.mkdir(parents=True, exist_ok=True)
+
+        with log.open("a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "time": datetime.now(timezone.utc).isoformat(),
+                        "code": code,
+                        "source": fn.__name__,
+                        "chunks": failed_chunks,
+                    },
+                    ensure_ascii=False,
+                ) + "\n"
+            )
+
+        print(
+            f"[warn] {code} {fn.__name__}: "
+            f"failed chunks {failed_chunks}",
+            flush=True,
+        )
+
     if not parts:
         return pd.DataFrame(columns=list(cols.values()))
+
     out = pd.concat(parts)
+
     return out[~out.index.duplicated(keep="last")]
 
 
@@ -57,10 +140,35 @@ def fetch_stock(code: str, start: str, end: str) -> list[dict]:
     ohlcv = stock.get_market_ohlcv(start, end, code, adjusted=True)
     if ohlcv is None or ohlcv.empty:
         return []
-    df = ohlcv.rename(columns={"시가": "open", "고가": "high", "저가": "low", "종가": "close", "거래량": "volume"})
-    cap = _krx(stock.get_market_cap, start, end, code, {"시가총액": "market_cap", "거래대금": "trading_value"})
-    flow = _krx(stock.get_market_trading_value_by_date, start, end, code,
-                {"외국인합계": "foreign_net_buy", "기관합계": "inst_net_buy"})
+
+    df = ohlcv.rename(columns={
+        "시가": "open",
+        "고가": "high",
+        "저가": "low",
+        "종가": "close",
+        "거래량": "volume",
+    })
+
+    # 실제 주가 데이터가 존재하는 첫 날짜부터 KRX 조회
+    actual_start = pd.Timestamp(df.index.min()).strftime("%Y%m%d")
+    actual_end = pd.Timestamp(df.index.max()).strftime("%Y%m%d")
+
+    cap = _krx(
+        stock.get_market_cap,
+        actual_start,
+        actual_end,
+        code,
+        {"시가총액": "market_cap", "거래대금": "trading_value"},
+    )
+
+    flow = _krx(
+        stock.get_market_trading_value_by_date,
+        actual_start,
+        actual_end,
+        code,
+        {"외국인합계": "foreign_net_buy", "기관합계": "inst_net_buy"},
+    )
+
     df = df.join(cap, how="left").join(flow, how="left")
 
     rows = []
@@ -138,13 +246,14 @@ def _stored_closes(codes, start, end) -> dict:
 
 
 def _done_codes(start: str, end: str) -> set[str]:
-    """--resume용: 이미 [start, end]를 거의 다 받아 둔 종목."""
-    df = read_sql(
-        "SELECT code, MIN(trade_date) lo, MAX(trade_date) hi FROM price_daily GROUP BY code"
-    )
-    s = dt.datetime.strptime(start, "%Y%m%d").date() + dt.timedelta(days=10)
-    e = dt.datetime.strptime(end, "%Y%m%d").date() - dt.timedelta(days=5)
-    return {r.code for r in df.itertuples() if r.lo <= s and r.hi >= e}
+    """Bulk historical resume: skip codes already stored at least once.
+
+    This prevents repeatedly fetching late-listed stocks. Incomplete KRX fields
+    are handled separately by repair_missing_krx.py. This is not a daily refresh.
+    """
+    df = read_sql("SELECT DISTINCT code FROM price_daily")
+    return set(df["code"].astype(str))
+
 
 
 def fetch_all(codes: list[str], start: str, end: str, sleep: float = 0.3,

@@ -76,8 +76,24 @@ def upsert_rows(table: str, rows: list[dict], conflict_cols: list[str], chunk: i
     if not rows:
         return 0
     cols = list(rows[0].keys())
+
     update_cols = [c for c in cols if c not in conflict_cols]
-    update_sql = ", ".join(f"{c} = EXCLUDED.{c}" for c in update_cols)
+
+    # price_daily의 기존 정상 데이터가 NULL로 덮어써지는 것을 방지
+    protected_cols = {
+        "market_cap",
+        "trading_value",
+        "foreign_net_buy",
+        "inst_net_buy",
+    }
+
+    update_sql = ", ".join(
+        f"{c} = COALESCE(EXCLUDED.{c}, {table}.{c})"
+        if table == "price_daily" and c in protected_cols
+        else f"{c} = EXCLUDED.{c}"
+        for c in update_cols
+    )
+
     sql = text(
         f"INSERT INTO {table} ({', '.join(cols)}) VALUES ({', '.join(':' + c for c in cols)}) "
         f"ON CONFLICT ({', '.join(conflict_cols)}) "
